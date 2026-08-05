@@ -1,14 +1,17 @@
 """
-Stack CDK principal para a plataforma de predição de churn.
+Stack CDK completa para a plataforma de predição de churn - Sky Brazil.
 
-Recursos provisionados:
-- S3 Bucket com estrutura de prefixos para dados, modelos e relatórios
-- DynamoDB tables: churn_feature_store, churn_predictions, churn_executions
-- Secrets Manager para NPAW API key
-- IAM Roles (least privilege) para Lambda, SageMaker, ECS
+Recursos em stack única (evita ciclos de dependência):
+- S3 Bucket (dados, modelos, relatórios)
+- DynamoDB tables (feature_store, predictions, executions)
+- Secrets Manager (NPAW API key)
+- IAM Roles (Lambda, SageMaker, ECS)
+- Lambda functions (8 handlers do pipeline)
+- Step Functions state machine
+- EventBridge rule (agendamento semanal)
+- S3 event trigger (upload → pipeline)
 
-SEM VPC/NAT Gateway — Lambdas acessam serviços AWS via endpoints públicos,
-e a chamada à API NPAW é feita diretamente (Lambda fora de VPC tem internet).
+Sem VPC/NAT Gateway — custo estimado: ~$5-15/mês.
 """
 
 from aws_cdk import (
@@ -16,51 +19,76 @@ from aws_cdk import (
     RemovalPolicy,
     Stack,
     aws_dynamodb as dynamodb,
+    aws_events as events,
+    aws_events_targets as events_targets,
     aws_iam as iam,
+    aws_lambda as _lambda,
+    aws_logs as logs,
     aws_s3 as s3,
+    aws_s3_notifications as s3n,
     aws_secretsmanager as secretsmanager,
+    aws_stepfunctions as sfn,
 )
 from constructs import Construct
 
 
 class ChurnPredictionStack(Stack):
-    """Stack principal com recursos base da plataforma de predição de churn."""
+    """Stack completa da plataforma de predição de churn."""
+
+    HANDLER_NAMES = [
+        "ingest", "extract", "feature", "store",
+        "predict", "shap", "bedrock", "report",
+    ]
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # ============================================================
-        # S3 Bucket - Armazenamento de dados, modelos e relatórios
-        # ============================================================
+        # === Storage ===
         self.bucket = self._create_s3_bucket()
+        self.feature_store_table = self._create_dynamo_table(
+            "ChurnFeatureStore", "churn_feature_store",
+            pk="user_id", sk="version", sk_type=dynamodb.AttributeType.NUMBER,
+        )
+        self.predictions_table = self._create_dynamo_table(
+            "ChurnPredictions", "churn_predictions",
+            pk="execution_id", sk="user_id",
+        )
+        self.executions_table = self._create_dynamo_table(
+            "ChurnExecutions", "churn_executions", pk="execution_id",
+        )
+        self.npaw_secret = secretsmanager.Secret(
+            self, "NpawApiKey",
+            secret_name="churn-prediction/npaw-api-key",
+            description="NPAW API Key - Sky Brazil",
+            removal_policy=RemovalPolicy.DESTROY,
+        )
 
-        # ============================================================
-        # DynamoDB Tables
-        # ============================================================
-        self.feature_store_table = self._create_feature_store_table()
-        self.predictions_table = self._create_predictions_table()
-        self.executions_table = self._create_executions_table()
+        # === IAM Roles ===
+        self.lambda_role = self._create_lambda_role()
+        self.sagemaker_role = self._create_sagemaker_role()
+        self.ecs_task_role = self._create_ecs_role()
 
-        # ============================================================
-        # Secrets Manager - NPAW API Key
-        # ============================================================
-        self.npaw_secret = self._create_npaw_secret()
+        # === Lambda Functions ===
+        self.lambda_functions = self._create_lambda_functions()
 
-        # ============================================================
-        # IAM Roles (least privilege)
-        # ============================================================
-        self.lambda_execution_role = self._create_lambda_execution_role()
-        self.sagemaker_execution_role = self._create_sagemaker_execution_role()
-        self.ecs_task_role = self._create_ecs_task_role()
+        # === Step Functions ===
+        self.state_machine = self._create_state_machine()
+
+        # === EventBridge (cron semanal) ===
+        self._create_weekly_schedule()
+
+        # === S3 Trigger (upload → pipeline) ===
+        self._create_s3_trigger()
+
+        # === CloudWatch Log Groups ===
+        self._create_log_groups()
 
     # ------------------------------------------------------------------
-    # S3 Bucket
+    # S3
     # ------------------------------------------------------------------
     def _create_s3_bucket(self) -> s3.Bucket:
-        """Cria bucket S3 com lifecycle rules e encryption."""
-        bucket = s3.Bucket(
-            self,
-            "ChurnPredictionBucket",
+        return s3.Bucket(
+            self, "Bucket",
             bucket_name="sky-brazil-churn-prediction",
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
@@ -68,300 +96,269 @@ class ChurnPredictionStack(Stack):
             auto_delete_objects=True,
             removal_policy=RemovalPolicy.DESTROY,
             lifecycle_rules=[
-                s3.LifecycleRule(
-                    id="raw-data-lifecycle",
-                    prefix="raw_data/",
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=Duration.days(90),
-                        ),
-                    ],
-                    expiration=Duration.days(365),
-                ),
-                s3.LifecycleRule(
-                    id="features-lifecycle",
-                    prefix="features/",
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=Duration.days(180),
-                        ),
-                    ],
-                ),
-                s3.LifecycleRule(
-                    id="models-lifecycle",
-                    prefix="models/",
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=Duration.days(365),
-                        ),
-                    ],
-                ),
-                s3.LifecycleRule(
-                    id="reports-lifecycle",
-                    prefix="reports/",
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=Duration.days(180),
-                        ),
-                    ],
-                    expiration=Duration.days(730),
-                ),
-                s3.LifecycleRule(
-                    id="predictions-lifecycle",
-                    prefix="predictions/",
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=Duration.days(90),
-                        ),
-                    ],
-                    expiration=Duration.days(365),
-                ),
+                s3.LifecycleRule(id="raw", prefix="raw_data/",
+                    transitions=[s3.Transition(storage_class=s3.StorageClass.INFREQUENT_ACCESS, transition_after=Duration.days(90))],
+                    expiration=Duration.days(365)),
+                s3.LifecycleRule(id="predictions", prefix="predictions/",
+                    transitions=[s3.Transition(storage_class=s3.StorageClass.INFREQUENT_ACCESS, transition_after=Duration.days(90))],
+                    expiration=Duration.days(365)),
+                s3.LifecycleRule(id="reports", prefix="reports/",
+                    transitions=[s3.Transition(storage_class=s3.StorageClass.INFREQUENT_ACCESS, transition_after=Duration.days(180))],
+                    expiration=Duration.days(730)),
             ],
         )
 
-        return bucket
-
     # ------------------------------------------------------------------
-    # DynamoDB Tables
+    # DynamoDB
     # ------------------------------------------------------------------
-    def _create_feature_store_table(self) -> dynamodb.Table:
-        """Tabela churn_feature_store: PK=user_id, SK=version."""
-        return dynamodb.Table(
-            self,
-            "ChurnFeatureStoreTable",
-            table_name="churn_feature_store",
-            partition_key=dynamodb.Attribute(
-                name="user_id", type=dynamodb.AttributeType.STRING,
-            ),
-            sort_key=dynamodb.Attribute(
-                name="version", type=dynamodb.AttributeType.NUMBER,
-            ),
+    def _create_dynamo_table(
+        self, id: str, name: str, pk: str, sk=None,
+        sk_type=dynamodb.AttributeType.STRING,
+    ) -> dynamodb.Table:
+        kwargs = dict(
+            table_name=name,
+            partition_key=dynamodb.Attribute(name=pk, type=dynamodb.AttributeType.STRING),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             encryption=dynamodb.TableEncryption.AWS_MANAGED,
-            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
-                point_in_time_recovery_enabled=True,
-            ),
             removal_policy=RemovalPolicy.DESTROY,
         )
-
-    def _create_predictions_table(self) -> dynamodb.Table:
-        """Tabela churn_predictions: PK=execution_id, SK=user_id."""
-        return dynamodb.Table(
-            self,
-            "ChurnPredictionsTable",
-            table_name="churn_predictions",
-            partition_key=dynamodb.Attribute(
-                name="execution_id", type=dynamodb.AttributeType.STRING,
-            ),
-            sort_key=dynamodb.Attribute(
-                name="user_id", type=dynamodb.AttributeType.STRING,
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            encryption=dynamodb.TableEncryption.AWS_MANAGED,
-            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
-                point_in_time_recovery_enabled=True,
-            ),
-            removal_policy=RemovalPolicy.DESTROY,
-        )
-
-    def _create_executions_table(self) -> dynamodb.Table:
-        """Tabela churn_executions: PK=execution_id."""
-        return dynamodb.Table(
-            self,
-            "ChurnExecutionsTable",
-            table_name="churn_executions",
-            partition_key=dynamodb.Attribute(
-                name="execution_id", type=dynamodb.AttributeType.STRING,
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            encryption=dynamodb.TableEncryption.AWS_MANAGED,
-            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
-                point_in_time_recovery_enabled=True,
-            ),
-            removal_policy=RemovalPolicy.DESTROY,
-        )
+        if sk:
+            kwargs["sort_key"] = dynamodb.Attribute(name=sk, type=sk_type)
+        return dynamodb.Table(self, id, **kwargs)
 
     # ------------------------------------------------------------------
-    # Secrets Manager
+    # IAM
     # ------------------------------------------------------------------
-    def _create_npaw_secret(self) -> secretsmanager.Secret:
-        """Cria secret para a API Key da NPAW."""
-        return secretsmanager.Secret(
-            self,
-            "NpawApiKeySecret",
-            secret_name="churn-prediction/npaw-api-key",
-            description="API Key para autenticação na NPAW (Sky Brazil)",
-            removal_policy=RemovalPolicy.DESTROY,
-        )
-
-    # ------------------------------------------------------------------
-    # IAM Roles (Least Privilege)
-    # ------------------------------------------------------------------
-    def _create_lambda_execution_role(self) -> iam.Role:
-        """IAM Role para funções Lambda do pipeline (sem VPC)."""
-        role = iam.Role(
-            self,
-            "LambdaExecutionRole",
+    def _create_lambda_role(self) -> iam.Role:
+        role = iam.Role(self, "LambdaRole",
             role_name="churn-prediction-lambda-role",
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-            description="Role para Lambda functions do pipeline de churn prediction",
         )
-
-        # CloudWatch Logs
-        role.add_to_policy(iam.PolicyStatement(
-            sid="CloudWatchLogs",
-            effect=iam.Effect.ALLOW,
-            actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-            resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/churn-prediction/*"],
+        role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name(
+            "service-role/AWSLambdaBasicExecutionRole"
         ))
-
-        # S3
         role.add_to_policy(iam.PolicyStatement(
-            sid="S3Access",
-            effect=iam.Effect.ALLOW,
             actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"],
             resources=[self.bucket.bucket_arn, f"{self.bucket.bucket_arn}/*"],
         ))
-
-        # DynamoDB
         role.add_to_policy(iam.PolicyStatement(
-            sid="DynamoDBAccess",
-            effect=iam.Effect.ALLOW,
             actions=["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query",
                      "dynamodb:BatchWriteItem", "dynamodb:BatchGetItem", "dynamodb:Scan"],
-            resources=[
-                self.feature_store_table.table_arn,
-                self.predictions_table.table_arn,
-                self.executions_table.table_arn,
-            ],
+            resources=[self.feature_store_table.table_arn, self.predictions_table.table_arn,
+                       self.executions_table.table_arn],
         ))
-
-        # Secrets Manager
         role.add_to_policy(iam.PolicyStatement(
-            sid="SecretsManagerRead",
-            effect=iam.Effect.ALLOW,
             actions=["secretsmanager:GetSecretValue"],
             resources=[self.npaw_secret.secret_arn],
         ))
-
-        # SageMaker
         role.add_to_policy(iam.PolicyStatement(
-            sid="SageMakerInvoke",
-            effect=iam.Effect.ALLOW,
             actions=["sagemaker:CreateTransformJob", "sagemaker:DescribeTransformJob",
                      "sagemaker:ListModelPackages", "sagemaker:DescribeModelPackage",
                      "sagemaker:CreateModel"],
             resources=["*"],
         ))
-
-        # Bedrock
         role.add_to_policy(iam.PolicyStatement(
-            sid="BedrockInvoke",
-            effect=iam.Effect.ALLOW,
             actions=["bedrock:InvokeModel"],
             resources=[f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-haiku-*"],
         ))
-
-        # CloudWatch Metrics
         role.add_to_policy(iam.PolicyStatement(
-            sid="CloudWatchMetrics",
-            effect=iam.Effect.ALLOW,
             actions=["cloudwatch:PutMetricData"],
             resources=["*"],
         ))
-
         return role
 
-    def _create_sagemaker_execution_role(self) -> iam.Role:
-        """IAM Role para SageMaker Training Jobs e Batch Transform."""
-        role = iam.Role(
-            self,
-            "SageMakerExecutionRole",
+    def _create_sagemaker_role(self) -> iam.Role:
+        role = iam.Role(self, "SageMakerRole",
             role_name="churn-prediction-sagemaker-role",
             assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),
-            description="Role para SageMaker Training e Batch Transform",
         )
-
         role.add_to_policy(iam.PolicyStatement(
-            sid="S3Access",
-            effect=iam.Effect.ALLOW,
-            actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
+            actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
             resources=[self.bucket.bucket_arn, f"{self.bucket.bucket_arn}/*"],
         ))
-
         role.add_to_policy(iam.PolicyStatement(
-            sid="CloudWatchLogs",
-            effect=iam.Effect.ALLOW,
-            actions=["logs:CreateLogGroup", "logs:CreateLogStream",
-                     "logs:PutLogEvents", "logs:DescribeLogStreams"],
+            actions=["ecr:GetAuthorizationToken", "ecr:BatchGetImage",
+                     "ecr:GetDownloadUrlForLayer"],
+            resources=["*"],
+        ))
+        role.add_to_policy(iam.PolicyStatement(
+            actions=["sagemaker:CreateModelPackage", "sagemaker:ListModelPackages",
+                     "sagemaker:DescribeModelPackage", "sagemaker:UpdateModelPackage"],
+            resources=["*"],
+        ))
+        role.add_to_policy(iam.PolicyStatement(
+            actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/sagemaker/*"],
         ))
-
-        role.add_to_policy(iam.PolicyStatement(
-            sid="ECRAccess",
-            effect=iam.Effect.ALLOW,
-            actions=["ecr:GetAuthorizationToken", "ecr:BatchGetImage",
-                     "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"],
-            resources=["*"],
-        ))
-
-        role.add_to_policy(iam.PolicyStatement(
-            sid="SageMakerModelRegistry",
-            effect=iam.Effect.ALLOW,
-            actions=["sagemaker:CreateModelPackage", "sagemaker:CreateModelPackageGroup",
-                     "sagemaker:DescribeModelPackage", "sagemaker:DescribeModelPackageGroup",
-                     "sagemaker:ListModelPackages", "sagemaker:UpdateModelPackage"],
-            resources=[
-                f"arn:aws:sagemaker:{self.region}:{self.account}:model-package-group/churn-prediction-models",
-                f"arn:aws:sagemaker:{self.region}:{self.account}:model-package/churn-prediction-models/*",
-            ],
-        ))
-
-        role.add_to_policy(iam.PolicyStatement(
-            sid="CloudWatchMetrics",
-            effect=iam.Effect.ALLOW,
-            actions=["cloudwatch:PutMetricData"],
-            resources=["*"],
-        ))
-
         return role
 
-    def _create_ecs_task_role(self) -> iam.Role:
-        """IAM Role para ECS Fargate Task (Dashboard Streamlit)."""
-        role = iam.Role(
-            self,
-            "EcsTaskRole",
+    def _create_ecs_role(self) -> iam.Role:
+        role = iam.Role(self, "EcsRole",
             role_name="churn-prediction-ecs-task-role",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
-            description="Role para ECS Fargate task do dashboard Streamlit",
         )
-
         role.add_to_policy(iam.PolicyStatement(
-            sid="S3ReadAccess",
-            effect=iam.Effect.ALLOW,
             actions=["s3:GetObject", "s3:ListBucket"],
-            resources=[self.bucket.bucket_arn, f"{self.bucket.bucket_arn}/reports/*",
-                       f"{self.bucket.bucket_arn}/predictions/*"],
+            resources=[self.bucket.bucket_arn, f"{self.bucket.bucket_arn}/*"],
         ))
-
         role.add_to_policy(iam.PolicyStatement(
-            sid="DynamoDBReadAccess",
-            effect=iam.Effect.ALLOW,
-            actions=["dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem"],
+            actions=["dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan"],
             resources=[self.predictions_table.table_arn, self.executions_table.table_arn,
                        self.feature_store_table.table_arn],
         ))
+        return role
 
-        role.add_to_policy(iam.PolicyStatement(
-            sid="CloudWatchLogs",
-            effect=iam.Effect.ALLOW,
-            actions=["logs:CreateLogStream", "logs:PutLogEvents"],
-            resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/churn-prediction/dashboard*"],
+    # ------------------------------------------------------------------
+    # Lambda Functions
+    # ------------------------------------------------------------------
+    def _create_lambda_functions(self) -> dict[str, _lambda.Function]:
+        functions: dict[str, _lambda.Function] = {}
+        common_env = {
+            "BUCKET_NAME": self.bucket.bucket_name,
+            "FEATURE_STORE_TABLE": self.feature_store_table.table_name,
+            "PREDICTIONS_TABLE": self.predictions_table.table_name,
+            "EXECUTIONS_TABLE": self.executions_table.table_name,
+        }
+        handler_config = {
+            "ingest":  {"timeout": 60,  "memory": 256},
+            "extract": {"timeout": 900, "memory": 512},
+            "feature": {"timeout": 600, "memory": 1024},
+            "store":   {"timeout": 300, "memory": 256},
+            "predict": {"timeout": 900, "memory": 512},
+            "shap":    {"timeout": 600, "memory": 2048},
+            "bedrock": {"timeout": 600, "memory": 512},
+            "report":  {"timeout": 300, "memory": 512},
+        }
+
+        for name in self.HANDLER_NAMES:
+            cfg = handler_config[name]
+            fn = _lambda.Function(self, f"Fn-{name}",
+                function_name=f"churn-pipeline-{name}",
+                runtime=_lambda.Runtime.PYTHON_3_11,
+                handler=f"src.orchestrator.handlers.{name}_handler.handler",
+                code=_lambda.Code.from_asset("..", exclude=[
+                    "infra/*", "docs/*", "tests/*", ".git/*",
+                    ".hypothesis/*", "__pycache__/*", ".venv/*", "cdk.out/*",
+                ]),
+                timeout=Duration.seconds(cfg["timeout"]),
+                memory_size=cfg["memory"],
+                role=self.lambda_role,
+                environment=common_env,
+            )
+            functions[name] = fn
+        return functions
+
+    # ------------------------------------------------------------------
+    # Step Functions
+    # ------------------------------------------------------------------
+    def _create_state_machine(self) -> sfn.CfnStateMachine:
+        import json, copy, sys
+        sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
+        from src.orchestrator.step_functions import PIPELINE_DEFINITION
+
+        definition = copy.deepcopy(PIPELINE_DEFINITION)
+
+        # Mapear estados para Lambda ARNs
+        state_handler_map = {
+            "Ingestion": "ingest", "Extraction": "extract",
+            "FeatureEngineering": "feature", "StoreFeatures": "store",
+            "Training": "predict", "EvaluateModel": "predict",
+            "RegisterModel": "predict", "BatchPredict": "predict",
+            "Explainability": "shap", "BedrockExplanations": "bedrock",
+            "GenerateReports": "report",
+        }
+        for state_name, handler_name in state_handler_map.items():
+            if state_name in definition["States"]:
+                state = definition["States"][state_name]
+                if state.get("Type") == "Task":
+                    state["Resource"] = self.lambda_functions[handler_name].function_arn
+
+        # Role para Step Functions
+        sfn_role = iam.Role(self, "SfnRole",
+            assumed_by=iam.ServicePrincipal("states.amazonaws.com"),
+        )
+        for fn in self.lambda_functions.values():
+            fn.grant_invoke(sfn_role)
+        sfn_role.add_to_policy(iam.PolicyStatement(
+            actions=["sagemaker:CreateTrainingJob", "sagemaker:DescribeTrainingJob",
+                     "sagemaker:CreateTransformJob", "sagemaker:DescribeTransformJob",
+                     "sagemaker:CreateModel"],
+            resources=["*"],
         ))
 
-        return role
+        return sfn.CfnStateMachine(self, "Pipeline",
+            state_machine_name="churn-prediction-pipeline",
+            definition_string=json.dumps(definition),
+            role_arn=sfn_role.role_arn,
+            state_machine_type="STANDARD",
+        )
+
+    # ------------------------------------------------------------------
+    # EventBridge (cron semanal - segunda 08:00 UTC)
+    # ------------------------------------------------------------------
+    def _create_weekly_schedule(self) -> None:
+        rule = events.Rule(self, "WeeklySchedule",
+            rule_name="churn-pipeline-weekly",
+            schedule=events.Schedule.cron(minute="0", hour="8", week_day="MON"),
+        )
+        rule.add_target(events_targets.SfnStateMachine(
+            sfn.StateMachine.from_state_machine_arn(
+                self, "ImportedSM", self.state_machine.attr_arn,
+            ),
+            input=events.RuleTargetInput.from_object({"mode": "predict", "source": "scheduled"}),
+        ))
+
+    # ------------------------------------------------------------------
+    # S3 Trigger (upload em input/ → inicia pipeline)
+    # ------------------------------------------------------------------
+    def _create_s3_trigger(self) -> None:
+        # Role separado para o trigger (evita circular dependency com bucket)
+        trigger_role = iam.Role(self, "S3TriggerRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+        trigger_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name(
+            "service-role/AWSLambdaBasicExecutionRole"
+        ))
+        trigger_role.add_to_policy(iam.PolicyStatement(
+            actions=["states:StartExecution"],
+            resources=[self.state_machine.attr_arn],
+        ))
+
+        trigger_fn = _lambda.Function(self, "S3Trigger",
+            function_name="churn-pipeline-s3-trigger",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="index.handler",
+            code=_lambda.Code.from_inline(
+                'import json, os, uuid, boto3\n'
+                'sfn = boto3.client("stepfunctions")\n'
+                'SM_ARN = os.environ["STATE_MACHINE_ARN"]\n'
+                'def handler(event, ctx):\n'
+                '    for r in event.get("Records", []):\n'
+                '        key = r["s3"]["object"]["key"]\n'
+                '        eid = uuid.uuid4().hex[:12]\n'
+                '        sfn.start_execution(stateMachineArn=SM_ARN, name=f"s3-{eid}",\n'
+                '            input=json.dumps({"mode":"predict","source":"s3","trigger_key":key}))\n'
+                '    return {"statusCode": 200}\n'
+            ),
+            timeout=Duration.seconds(30),
+            environment={"STATE_MACHINE_ARN": self.state_machine.attr_arn},
+            role=trigger_role,
+        )
+        self.bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(trigger_fn),
+            s3.NotificationKeyFilter(prefix="input/"),
+        )
+
+    # ------------------------------------------------------------------
+    # CloudWatch Log Groups
+    # ------------------------------------------------------------------
+    def _create_log_groups(self) -> None:
+        stages = ["extraction", "feature-engineering", "ml-inference",
+                  "explainability", "bedrock-explanation", "report-generation", "dashboard"]
+        for stage in stages:
+            logs.LogGroup(self, f"Log-{stage}",
+                log_group_name=f"/churn-prediction/{stage}",
+                retention=logs.RetentionDays.THREE_MONTHS,
+                removal_policy=RemovalPolicy.DESTROY,
+            )

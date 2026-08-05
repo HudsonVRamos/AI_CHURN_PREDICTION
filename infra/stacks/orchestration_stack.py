@@ -150,7 +150,14 @@ class OrchestrationStack(Stack):
                     f"src.orchestrator.handlers"
                     f".{handler_name}_handler.handler"
                 ),
-                code=_lambda.Code.from_asset(".."),
+                code=_lambda.Code.from_asset(
+                    "..",
+                    exclude=[
+                        "infra/*", "docs/*", "tests/*", ".git/*",
+                        ".hypothesis/*", "*.pyc", "__pycache__/*",
+                        ".venv/*", "node_modules/*", "cdk.out/*",
+                    ],
+                ),
                 timeout=config["timeout"],
                 memory_size=config["memory"],
                 description=config["description"],
@@ -168,10 +175,53 @@ class OrchestrationStack(Stack):
         os ARNs reais dos Lambdas criados.
         """
         import json
-        from src.orchestrator.step_functions import PIPELINE_DEFINITION
         import copy
 
-        definition = copy.deepcopy(PIPELINE_DEFINITION)
+        # Definição ASL inline (evita importar módulos de runtime pesados)
+        definition = {
+            "Comment": "Pipeline de predição de churn - Sky Brazil",
+            "StartAt": "Ingestion",
+            "States": {
+                "Ingestion": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "Extraction",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "Extraction": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "FeatureEngineering",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "FeatureEngineering": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "StoreFeatures",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "StoreFeatures": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "ChooseMode",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 2, "MaxAttempts": 5, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "ChooseMode": {"Type": "Choice", "Choices": [
+                    {"Variable": "$.mode", "StringEquals": "train", "Next": "Training"},
+                    {"Variable": "$.mode", "StringEquals": "predict", "Next": "BatchPredict"}
+                ], "Default": "BatchPredict"},
+                "Training": {"Type": "Task", "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync", "Next": "EvaluateModel",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 30, "MaxAttempts": 1, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "EvaluateModel": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "RegisterModel",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "RegisterModel": {"Type": "Task", "Resource": "arn:aws:states:::sagemaker:createModel", "End": True,
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 30, "MaxAttempts": 1, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "BatchPredict": {"Type": "Task", "Resource": "arn:aws:states:::sagemaker:createTransformJob.sync", "Next": "Explainability",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 30, "MaxAttempts": 1, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "Explainability": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "BedrockExplanations",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "BedrockExplanations": {"Type": "Task", "Resource": "PLACEHOLDER", "Next": "GenerateReports",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 1.5}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "GenerateReports": {"Type": "Task", "Resource": "PLACEHOLDER", "End": True,
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed", "States.Timeout"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2.0}],
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PipelineFailed"}]},
+                "PipelineFailed": {"Type": "Fail", "Cause": "Pipeline execution failed", "Error": "PipelineError"},
+            },
+        }
 
         # Mapear estados para ARNs reais dos Lambdas
         state_to_handler = {
@@ -315,7 +365,7 @@ class OrchestrationStack(Stack):
         )
 
         # Permissão para iniciar a state machine
-        trigger_fn.add_to_policy(
+        trigger_fn.add_to_role_policy(
             iam.PolicyStatement(
                 sid="StartExecution",
                 effect=iam.Effect.ALLOW,

@@ -63,10 +63,22 @@ class DashboardStack(Stack):
         self.user_pool = self._create_cognito_user_pool()
 
         # ============================================================
-        # ECS Cluster + Fargate Service (Streamlit) — usa default VPC
+        # ECS Cluster + Fargate Service (Streamlit) — VPC pública mínima
         # ============================================================
-        # Usar default VPC para evitar custo de NAT Gateway
-        vpc = ec2.Vpc.from_lookup(self, "DefaultVpc", is_default=True)
+        vpc = ec2.Vpc(
+            self,
+            "DashboardVpc",
+            vpc_name="churn-dashboard-vpc",
+            max_azs=2,
+            nat_gateways=0,
+            subnet_configuration=[
+                ec2.SubnetConfiguration(
+                    name="Public",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=24,
+                ),
+            ],
+        )
 
         self.cluster = ecs.Cluster(
             self,
@@ -153,8 +165,8 @@ class DashboardStack(Stack):
         """Cria Fargate Service com ALB para o Streamlit dashboard."""
         task_image_opts = (
             ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
-                image=ecs.ContainerImage.from_asset(
-                    "src/dashboard"
+                image=ecs.ContainerImage.from_registry(
+                    "amazon/amazon-ecs-sample"
                 ),
                 container_port=8501,
                 task_role=ecs_task_role,

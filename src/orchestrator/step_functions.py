@@ -120,7 +120,7 @@ PIPELINE_DEFINITION: dict[str, Any] = {
         },
         "Training": {
             "Type": "Task",
-            "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync",
+            "Resource": "arn:aws:lambda:us-east-1:ACCOUNT:function:churn-pipeline-predict",
             "Next": "EvaluateModel",
             "Retry": ML_RETRY_CONFIG,
             "Catch": DEFAULT_CATCH_CONFIG,
@@ -134,14 +134,14 @@ PIPELINE_DEFINITION: dict[str, Any] = {
         },
         "RegisterModel": {
             "Type": "Task",
-            "Resource": "arn:aws:states:::sagemaker:createModel",
+            "Resource": "arn:aws:lambda:us-east-1:ACCOUNT:function:churn-pipeline-predict",
             "End": True,
             "Retry": ML_RETRY_CONFIG,
             "Catch": DEFAULT_CATCH_CONFIG,
         },
         "BatchPredict": {
             "Type": "Task",
-            "Resource": "arn:aws:states:::sagemaker:createTransformJob.sync",
+            "Resource": "arn:aws:lambda:us-east-1:ACCOUNT:function:churn-pipeline-predict",
             "Next": "Explainability",
             "Retry": ML_RETRY_CONFIG,
             "Catch": DEFAULT_CATCH_CONFIG,
