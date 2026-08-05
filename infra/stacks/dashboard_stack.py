@@ -101,7 +101,7 @@ class DashboardStack(Stack):
                 f"LogGroup-{stage}",
                 log_group_name=f"/churn-prediction/{stage}",
                 retention=logs.RetentionDays.THREE_MONTHS,
-                removal_policy=RemovalPolicy.RETAIN,
+                removal_policy=RemovalPolicy.DESTROY,
             )
             log_groups[stage] = log_group
 
@@ -127,7 +127,7 @@ class DashboardStack(Stack):
                 require_symbols=False,
             ),
             account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
-            removal_policy=RemovalPolicy.RETAIN,
+            removal_policy=RemovalPolicy.DESTROY,
         )
 
         # Domínio Cognito para hosted UI (login)

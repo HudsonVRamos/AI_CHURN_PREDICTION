@@ -69,7 +69,8 @@ class ChurnPredictionStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            removal_policy=RemovalPolicy.RETAIN,
+            auto_delete_objects=True,
+            removal_policy=RemovalPolicy.DESTROY,
             lifecycle_rules=[
                 # Dados brutos: mover para IA após 90 dias, expirar após 365
                 s3.LifecycleRule(
@@ -160,7 +161,7 @@ class ChurnPredictionStack(Stack):
             point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True,
             ),
-            removal_policy=RemovalPolicy.RETAIN,
+            removal_policy=RemovalPolicy.DESTROY,
         )
 
         return table
@@ -188,7 +189,7 @@ class ChurnPredictionStack(Stack):
             point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True,
             ),
-            removal_policy=RemovalPolicy.RETAIN,
+            removal_policy=RemovalPolicy.DESTROY,
         )
 
         return table
@@ -212,7 +213,7 @@ class ChurnPredictionStack(Stack):
             point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True,
             ),
-            removal_policy=RemovalPolicy.RETAIN,
+            removal_policy=RemovalPolicy.DESTROY,
         )
 
         return table
@@ -227,7 +228,7 @@ class ChurnPredictionStack(Stack):
             "NpawApiKeySecret",
             secret_name="churn-prediction/npaw-api-key",
             description="API Key para autenticação na NPAW (Sky Brazil)",
-            removal_policy=RemovalPolicy.RETAIN,
+            removal_policy=RemovalPolicy.DESTROY,
         )
 
         return secret
