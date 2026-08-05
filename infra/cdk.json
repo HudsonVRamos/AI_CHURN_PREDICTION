@@ -1,0 +1,21 @@
+{
+  "app": "python app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "requirements*.txt",
+      "source.bat",
+      ".git",
+      ".mypy_cache",
+      ".pytest_cache",
+      ".venv",
+      "*.pyc",
+      "__pycache__"
+    ]
+  },
+  "context": {
+    "region": "us-east-1"
+  }
+}

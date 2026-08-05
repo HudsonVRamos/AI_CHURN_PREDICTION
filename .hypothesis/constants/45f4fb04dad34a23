@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\explanations\bedrock_explainer.py
+# hypothesis_version: 6.141.1
+
+[0.3, 0.6, 1024, 'Alto', 'Baixo', 'Médio', 'N/A', 'anthropic_version', 'application/json', 'attempt', 'aumenta', 'bedrock-2023-05-31', 'bedrock-explanation', 'bedrock-runtime', 'body', 'content', 'diminui', 'error', 'error_type', 'max_attempts', 'max_retries', 'max_tokens', 'mean', 'messages', 'role', 'std', 'temperature', 'text', 'us-east-1', 'user', 'user_id']

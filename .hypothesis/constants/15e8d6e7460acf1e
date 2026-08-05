@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\common\models.py
+# hypothesis_version: 6.141.1
+
+[-1.0, 0.0, 0.01, 0.3, 0.6, 1.0, 10.0, 100.0, 'Bitrate médio em bps', 'FeatureVector', 'High', 'ID do assinante', 'Low', 'Medium', 'Nome da feature', 'PredictionResult', 'Status da execução', 'after', 'catboost', 'completed', 'f1', 'failed', 'lightgbm', 'metrics', 'precision', 'predict', 'recall', 'roc_auc', 'running', 'top_features', 'train', 'xgboost']

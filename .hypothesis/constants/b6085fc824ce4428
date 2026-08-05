@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\store\feature_store.py
+# hypothesis_version: 6.141.1
+
+['ExclusiveStartKey', 'FilterExpression', 'Item', 'Items', 'LastEvaluatedKey', 'ScanIndexForward', 'avg_bitrate', 'avg_buffer_ratio', 'avg_happiness_score', 'avg_pause_count', 'avg_seek_count', 'churn_feature_store', 'distinct_channels', 'distinct_devices', 'dynamodb', 'error_rate', 'error_rate_trend', 'feature-engineering', 'features', 'from_date', 'generated_at', 'observation_end', 'observation_start', 'pct_episode', 'pct_live', 'pct_show', 'pct_sport', 'sessions_per_week', 'total', 'total_sessions', 'total_viewing_hours', 'user_id', 'version', 'viewing_time_trend']

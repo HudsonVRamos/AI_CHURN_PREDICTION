@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\features\feature_engineer.py
+# hypothesis_version: 6.141.1
+
+[0.0, 1.0, 7.0, 10.0, 25.0, 100.0, 60000.0, 86400.0, 3600000.0, '+00:00', 'EPISODE', 'LIVE', 'SHOW', 'SPORT', 'Z', 'avg_bitrate', 'avg_buffer_ratio', 'avg_happiness_score', 'avg_pause_count', 'avg_seek_count', 'buffer_ratio', 'content_channel', 'content_type', 'device', 'device_model', 'distinct_channels', 'distinct_devices', 'effective_time', 'end_at', 'error_code', 'error_rate', 'feature-engineering', 'happiness_score', 'pause_count', 'pct_episode', 'pct_live', 'pct_show', 'pct_sport', 'seek_count', 'session_count', 'sessions_per_week', 'total_sessions', 'total_viewing_hours', 'user_id']

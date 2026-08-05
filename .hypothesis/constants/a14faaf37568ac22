@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\extractors\npaw_extractor.py
+# hypothesis_version: 6.141.1
+
+[0.0, 1.0, 100, 400, 401, 403, 5000, 'data', 'desc', 'end_at', 'error', 'extraction', 'filter', 'fromDate', 'from_date', 'https://api.npaw.com', 'limit', 'max_concurrent', 'name', 'npaw-api-key', 'offset', 'orderBy', 'orderDirection', 'rules', 'sessions_count', 'toDate', 'to_date', 'total_users', 'uf', 'user_id', 'users_with_data', 'users_without_data', 'values']

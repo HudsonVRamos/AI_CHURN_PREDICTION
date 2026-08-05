@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\extractors\ingestion.py
+# hypothesis_version: 6.141.1
+
+[50000, '[', 'csv', 'duplicates_removed', 'extraction', 'invalid_count', 'invalid_id', 'json', 'user_id', 'user_ids', 'valid_count', '{']

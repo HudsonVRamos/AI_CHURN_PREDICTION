@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\ml\model_registry.py
+# hypothesis_version: 6.141.1
+
+[0.0, 100, ':mv', 'Approved', 'COUNT', 'Code', 'Containers', 'Count', 'CreationTime', 'Descending', 'Error', 'MaxResults', 'ModelDataUrl', 'ModelPackageArn', 'NextToken', 'Rejected', 'SortBy', 'SortOrder', 'ValidationException', 'algorithm', 'application/gzip', 'application/json', 'churn_predictions', 'dataset_version', 'dynamodb', 'f1', 'ml-inference', 'model_version = :mv', 'precision', 'recall', 'response', 'roc_auc', 's3', 'sagemaker', 'training_date', 'unknown', 'utf-8', 'xgboost']

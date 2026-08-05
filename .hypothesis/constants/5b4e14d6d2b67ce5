@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\common\logging.py
+# hypothesis_version: 6.141.1
+
+['_', 'args', 'bedrock-explanation', 'created', 'dashboard', 'duration_seconds', 'exc_info', 'exc_text', 'exception', 'execution_id', 'explainability', 'extra', 'extraction', 'feature-engineering', 'filename', 'funcName', 'level', 'levelname', 'levelno', 'lineno', 'message', 'ml-inference', 'module', 'msecs', 'msg', 'name', 'pathname', 'process', 'processName', 'relativeCreated', 'report-generation', 'stack_info', 'stage', 'taskName', 'thread', 'threadName', 'timestamp', 'unknown']

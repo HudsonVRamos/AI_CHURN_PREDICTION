@@ -1,0 +1,50 @@
+npaw:
+  account_code: "sky_brazil"
+  base_url: "https://api.npaw.com"
+  rate_limit_seconds: 1.0
+  max_concurrent_requests: 5
+  batch_size: 100
+  max_sessions_per_user: 5000
+
+observation:
+  time_window_months: 6
+  min_sessions: 5
+  min_weeks_for_trends: 4
+
+sagemaker:
+  region: "us-east-1"
+  algorithm: "xgboost"
+  training_instance: "ml.m5.xlarge"
+  batch_instance: "ml.m5.large"
+  model_package_group: "churn-prediction-models"
+
+bedrock:
+  region: "us-east-1"
+  model_id: "anthropic.claude-3-haiku-20240307-v1:0"
+  timeout_seconds: 60
+  max_retries: 2
+  language: "pt-BR"
+
+explainability:
+  top_features: 10
+  method: "shap"
+
+prediction:
+  risk_thresholds:
+    low_max: 30
+    medium_max: 60
+  batch_size: 1000
+
+monitoring:
+  drift_threshold_std: 2.0
+  max_inference_time_ms: 5000
+  max_failure_rate_pct: 5.0
+
+dashboard:
+  port: 8501
+  refresh_on_new_execution: true
+
+reports:
+  formats: ["json", "markdown"]
+  output_bucket: "sky-brazil-churn-prediction"
+  output_prefix: "reports"

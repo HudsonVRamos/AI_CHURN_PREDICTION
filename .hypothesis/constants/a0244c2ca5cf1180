@@ -1,0 +1,4 @@
+# file: D:\Projetos\AI_CHURN_PREDCTION\src\extractors\__init__.py
+# hypothesis_version: 6.141.1
+
+['IngestionError', 'IngestionResult', 'NPAWExtractor', 'NPAWExtractorError', 'ingest_user_ids', 'is_valid_uuid_v4']
