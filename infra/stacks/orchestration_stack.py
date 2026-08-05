@@ -14,7 +14,6 @@ from aws_cdk import (
     Duration,
     Stack,
     aws_dynamodb as dynamodb,
-    aws_ec2 as ec2,
     aws_events as events,
     aws_events_targets as events_targets,
     aws_iam as iam,
@@ -46,7 +45,6 @@ class OrchestrationStack(Stack):
         scope: Construct,
         construct_id: str,
         *,
-        vpc: ec2.IVpc,
         bucket: s3.IBucket,
         lambda_role: iam.IRole,
         feature_store_table: dynamodb.ITable,
@@ -57,7 +55,6 @@ class OrchestrationStack(Stack):
         """Inicializa o stack de orquestração.
 
         Args:
-            vpc: VPC compartilhada do stack principal.
             bucket: Bucket S3 para dados do pipeline.
             lambda_role: IAM Role para execução dos Lambdas.
             feature_store_table: Tabela DynamoDB do Feature Store.
@@ -67,7 +64,6 @@ class OrchestrationStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # Referências externas
-        self._vpc = vpc
         self._bucket = bucket
         self._lambda_role = lambda_role
         self._feature_store_table = feature_store_table
@@ -159,10 +155,6 @@ class OrchestrationStack(Stack):
                 memory_size=config["memory"],
                 description=config["description"],
                 role=self._lambda_role,
-                vpc=self._vpc,
-                vpc_subnets=ec2.SubnetSelection(
-                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
-                ),
                 environment=common_env,
             )
             functions[handler_name] = fn

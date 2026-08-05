@@ -47,7 +47,6 @@ class DashboardStack(Stack):
         self,
         scope: Construct,
         construct_id: str,
-        vpc: ec2.IVpc,
         ecs_task_role: iam.IRole,
         **kwargs,
     ) -> None:
@@ -64,8 +63,11 @@ class DashboardStack(Stack):
         self.user_pool = self._create_cognito_user_pool()
 
         # ============================================================
-        # ECS Cluster + Fargate Service (Streamlit)
+        # ECS Cluster + Fargate Service (Streamlit) — usa default VPC
         # ============================================================
+        # Usar default VPC para evitar custo de NAT Gateway
+        vpc = ec2.Vpc.from_lookup(self, "DefaultVpc", is_default=True)
+
         self.cluster = ecs.Cluster(
             self,
             "DashboardCluster",
@@ -179,7 +181,7 @@ class DashboardStack(Stack):
                 desired_count=1,
                 task_image_options=task_image_opts,
                 public_load_balancer=True,
-                assign_public_ip=False,
+                assign_public_ip=True,
                 listener_port=443,
             )
         )
