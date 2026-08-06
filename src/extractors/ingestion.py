@@ -45,11 +45,18 @@ class IngestionResult:
         valid_ids: Lista de UUIDs v4 válidos e únicos.
         invalid_ids: Lista de IDs que falharam na validação.
         duplicates_removed: Quantidade de duplicatas removidas.
+        user_dates: Dicionário com período de extração por user.
+            Formato: {"user_id": {"from_date": "YYYY-MM-DD", "to_date": "YYYY-MM-DD"}}
     """
 
     valid_ids: list[str]
     invalid_ids: list[str]
     duplicates_removed: int
+    user_dates: dict = None
+
+    def __post_init__(self):
+        if self.user_dates is None:
+            self.user_dates = {}
 
 
 def is_valid_uuid_v4(value: str) -> bool:
@@ -64,14 +71,23 @@ def is_valid_uuid_v4(value: str) -> bool:
     return bool(UUID_V4_REGEX.match(value.strip()))
 
 
-def _parse_csv(content: str) -> list[str]:
-    """Extrai IDs de conteúdo CSV com coluna 'user_id'.
+def _parse_csv(content: str) -> tuple[list[str], dict]:
+    """Extrai IDs e datas de conteúdo CSV.
+
+    Formatos aceitos:
+    - Coluna obrigatória: user_id
+    - Colunas opcionais: from_date, to_date
+
+    Exemplo CSV:
+        user_id,from_date,to_date
+        abc-123,2024-01-01,2024-06-15
+        def-456,2024-01-01,2024-12-31
 
     Args:
         content: Conteúdo CSV como string.
 
     Returns:
-        Lista de strings extraídas da coluna user_id.
+        Tupla (lista de IDs, dict de datas por user).
 
     Raises:
         IngestionError: Se a coluna 'user_id' não for encontrada.
@@ -89,30 +105,54 @@ def _parse_csv(content: str) -> list[str]:
             f"Colunas disponíveis: {reader.fieldnames}"
         )
 
-    # Encontrar o nome real da coluna
+    # Encontrar nomes reais das colunas
     col_index = fieldnames_lower.index("user_id")
     col_name = reader.fieldnames[col_index]
 
+    has_from_date = "from_date" in fieldnames_lower
+    has_to_date = "to_date" in fieldnames_lower
+    from_col = reader.fieldnames[fieldnames_lower.index("from_date")] if has_from_date else None
+    to_col = reader.fieldnames[fieldnames_lower.index("to_date")] if has_to_date else None
+
     ids: list[str] = []
+    user_dates: dict = {}
+
     for row in reader:
         value = row.get(col_name, "")
         if value and value.strip():
-            ids.append(value.strip())
+            uid = value.strip()
+            ids.append(uid)
 
-    return ids
+            # Extrair datas se colunas existirem
+            from_val = row.get(from_col, "").strip() if from_col else ""
+            to_val = row.get(to_col, "").strip() if to_col else ""
+
+            if from_val or to_val:
+                dates = {}
+                if from_val:
+                    dates["from_date"] = from_val
+                if to_val:
+                    dates["to_date"] = to_val
+                user_dates[uid.lower()] = dates
+
+    return ids, user_dates
 
 
-def _parse_json(content: str) -> list[str]:
-    """Extrai IDs de conteúdo JSON com chave 'user_ids'.
+def _parse_json(content: str) -> tuple[list[str], dict]:
+    """Extrai IDs e datas de conteúdo JSON.
+
+    Formatos aceitos:
+    - Simples: {"user_ids": ["id1", "id2"]}
+    - Com datas: {"users": [{"user_id": "abc", "from_date": "2024-01-01", "to_date": "2024-06-15"}]}
 
     Args:
         content: Conteúdo JSON como string.
 
     Returns:
-        Lista de strings extraídas da chave user_ids.
+        Tupla (lista de IDs, dict de datas por user).
 
     Raises:
-        IngestionError: Se o JSON for inválido ou a chave 'user_ids' não existir.
+        IngestionError: Se o JSON for inválido ou a chave esperada não existir.
     """
     try:
         data = json.loads(content)
@@ -121,12 +161,37 @@ def _parse_json(content: str) -> list[str]:
 
     if not isinstance(data, dict):
         raise IngestionError(
-            "JSON deve ser um objeto com a chave 'user_ids'."
+            "JSON deve ser um objeto com a chave 'user_ids' ou 'users'."
         )
 
+    user_dates: dict = {}
+
+    # Formato com datas: {"users": [{"user_id": "...", "from_date": "...", "to_date": "..."}]}
+    if "users" in data:
+        users_list = data["users"]
+        if not isinstance(users_list, list):
+            raise IngestionError("'users' deve ser uma lista de objetos.")
+        ids = []
+        for item in users_list:
+            if isinstance(item, dict):
+                uid = str(item.get("user_id", "")).strip()
+                if uid:
+                    ids.append(uid)
+                    from_val = str(item.get("from_date", "")).strip()
+                    to_val = str(item.get("to_date", "")).strip()
+                    if from_val or to_val:
+                        dates = {}
+                        if from_val:
+                            dates["from_date"] = from_val
+                        if to_val:
+                            dates["to_date"] = to_val
+                        user_dates[uid.lower()] = dates
+        return ids, user_dates
+
+    # Formato simples: {"user_ids": ["id1", "id2"]}
     if "user_ids" not in data:
         raise IngestionError(
-            f"Chave 'user_ids' não encontrada no JSON. "
+            f"Chave 'user_ids' ou 'users' não encontrada no JSON. "
             f"Chaves disponíveis: {list(data.keys())}"
         )
 
@@ -136,42 +201,46 @@ def _parse_json(content: str) -> list[str]:
             "'user_ids' deve ser uma lista de strings."
         )
 
-    # Converter todos os elementos para string e filtrar vazios
-    return [str(uid).strip() for uid in user_ids if uid is not None and str(uid).strip()]
+    return [str(uid).strip() for uid in user_ids if uid is not None and str(uid).strip()], user_dates
 
 
 def ingest_user_ids(
-    source: str | list[str],
-    source_format: str | None = None,
-) -> IngestionResult:
+    source,
+    source_format=None,
+):
     """Ingere uma lista de User IDs a partir de CSV, JSON ou array direto.
 
     Valida UUID v4, deduplica e retorna resultado estruturado.
+    Se o CSV/JSON contém colunas from_date/to_date, extrai as datas por user.
+
+    Formatos de entrada com datas:
+    - CSV: user_id,from_date,to_date
+    - JSON: {"users": [{"user_id": "...", "from_date": "...", "to_date": "..."}]}
 
     Args:
         source: Conteúdo CSV (string), conteúdo JSON (string), ou lista de IDs.
-        source_format: Formato da fonte - "csv", "json", ou None (auto-detect para
-                       listas diretas). Se source for list, este parâmetro é ignorado.
+        source_format: Formato da fonte - "csv", "json", ou None (auto-detect).
 
     Returns:
-        IngestionResult com IDs válidos, inválidos e contagem de duplicatas.
+        IngestionResult com IDs válidos, inválidos, duplicatas e user_dates.
 
     Raises:
         IngestionError: Se nenhum ID válido for encontrado, lista vazia,
                         ou se exceder o limite de 50.000 IDs.
     """
-    raw_ids: list[str]
+    raw_ids = []
+    user_dates = {}
 
-    # Determinar a fonte e extrair IDs brutos
+    # Determinar a fonte e extrair IDs brutos + datas
     if isinstance(source, list):
         raw_ids = [str(uid).strip() for uid in source if uid is not None and str(uid).strip()]
     elif source_format == "csv":
-        raw_ids = _parse_csv(source)
+        raw_ids, user_dates = _parse_csv(source)
     elif source_format == "json":
-        raw_ids = _parse_json(source)
+        raw_ids, user_dates = _parse_json(source)
     else:
         # Auto-detect: tenta JSON primeiro, depois CSV
-        raw_ids = _auto_detect_and_parse(source)
+        raw_ids, user_dates = _auto_detect_and_parse(source)
 
     # Verificar lista vazia
     if not raw_ids:
@@ -239,17 +308,16 @@ def ingest_user_ids(
         valid_ids=valid_ids,
         invalid_ids=invalid_ids,
         duplicates_removed=duplicates_removed,
+        user_dates=user_dates,
+    )
     )
 
 
-def _auto_detect_and_parse(content: str) -> list[str]:
+def _auto_detect_and_parse(content):
     """Tenta detectar automaticamente o formato do conteúdo (JSON ou CSV).
 
-    Args:
-        content: Conteúdo como string.
-
     Returns:
-        Lista de IDs extraídos.
+        Tupla (lista de IDs, dict de datas por user).
 
     Raises:
         IngestionError: Se o formato não puder ser detectado.

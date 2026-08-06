@@ -61,6 +61,7 @@ def handler(event: dict, context: Any) -> dict:
             "valid_user_ids": result.valid_ids,
             "invalid_user_ids": result.invalid_ids,
             "duplicates_removed": result.duplicates_removed,
+            "user_dates": result.user_dates,
             "users_count": len(result.valid_ids),
             "stage_completed": "ingestion",
         }
