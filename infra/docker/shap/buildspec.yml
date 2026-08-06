@@ -1,0 +1,20 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 761018874615.dkr.ecr.us-east-1.amazonaws.com
+      - echo Listing source files...
+      - ls -la
+      - ls -la src/ || echo "src/ not found at root"
+      - find . -maxdepth 2 -type d
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker build -t churn-pipeline-shap:latest .
+      - docker tag churn-pipeline-shap:latest 761018874615.dkr.ecr.us-east-1.amazonaws.com/churn-pipeline-shap:latest
+  post_build:
+    commands:
+      - echo Pushing Docker image...
+      - docker push 761018874615.dkr.ecr.us-east-1.amazonaws.com/churn-pipeline-shap:latest
+      - echo Done!

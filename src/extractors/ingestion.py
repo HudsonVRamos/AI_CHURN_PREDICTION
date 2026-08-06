@@ -18,11 +18,12 @@ from src.common.logging import get_logger
 
 logger = get_logger("extraction")
 
-# Regex para validação de UUID v4
-# Aceita lowercase e uppercase; o dígito de versão deve ser '4'
+# Regex para validação de UUID v4 e v5
+# Aceita lowercase e uppercase; o dígito de versão deve ser '4' ou '5'
 # e o primeiro dígito do campo clock_seq deve ser 8, 9, a ou b.
-UUID_V4_REGEX = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+# Sky Brazil usa UUID v5 (namespace-based), por isso aceitamos ambos.
+UUID_VALID_REGEX = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[45][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
 
@@ -60,15 +61,17 @@ class IngestionResult:
 
 
 def is_valid_uuid_v4(value: str) -> bool:
-    """Verifica se uma string é um UUID v4 válido.
+    """Verifica se uma string é um UUID v4 ou v5 válido.
+
+    Sky Brazil usa UUID v5 (namespace-based), então aceitamos ambos.
 
     Args:
         value: String a ser validada.
 
     Returns:
-        True se for UUID v4 válido, False caso contrário.
+        True se for UUID v4 ou v5 válido, False caso contrário.
     """
-    return bool(UUID_V4_REGEX.match(value.strip()))
+    return bool(UUID_VALID_REGEX.match(value.strip()))
 
 
 def _parse_csv(content: str) -> tuple[list[str], dict]:
@@ -284,7 +287,7 @@ def ingest_user_ids(
         raise IngestionError(
             "Nenhum User ID válido encontrado. "
             f"Todos os {len(invalid_ids)} IDs fornecidos são inválidos. "
-            "É necessário ao menos 1 User ID em formato UUID v4."
+            "É necessário ao menos 1 User ID em formato UUID v4 ou v5."
         )
 
     # Verificar limite máximo (R1.1)

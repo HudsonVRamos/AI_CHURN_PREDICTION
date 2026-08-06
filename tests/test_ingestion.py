@@ -94,6 +94,17 @@ class TestIsValidUuidV4:
         """UUID nil (todos zeros) não é UUID v4."""
         assert is_valid_uuid_v4("00000000-0000-0000-0000-000000000000") is False
 
+    def test_uuid_v5_valido(self) -> None:
+        """UUID v5 (namespace-based) deve ser válido — Sky Brazil usa v5."""
+        # UUID v5 real da planilha Sky Brazil
+        uid = "9e527027-b330-5d8f-aaa2-bf6653bd6eec"
+        assert is_valid_uuid_v4(uid) is True
+
+    def test_uuid_v5_gerado(self) -> None:
+        """UUID v5 gerado pelo módulo uuid deve ser válido."""
+        uid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "test.example.com"))
+        assert is_valid_uuid_v4(uid) is True
+
 
 # =========================================================================
 # Testes de ingest_user_ids com array direto
@@ -229,7 +240,7 @@ class TestIngestJSON:
     def test_json_sem_chave_user_ids(self) -> None:
         """JSON sem chave user_ids deve levantar IngestionError."""
         json_content = json.dumps({"ids": ["abc"]})
-        with pytest.raises(IngestionError, match="Chave 'user_ids' não encontrada"):
+        with pytest.raises(IngestionError, match="Chave 'user_ids' ou 'users' não encontrada"):
             ingest_user_ids(json_content, source_format="json")
 
     def test_json_invalido(self) -> None:

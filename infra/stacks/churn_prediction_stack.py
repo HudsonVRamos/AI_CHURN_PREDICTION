@@ -19,6 +19,7 @@ from aws_cdk import (
     RemovalPolicy,
     Stack,
     aws_dynamodb as dynamodb,
+    aws_ecr_assets as ecr_assets,
     aws_events as events,
     aws_events_targets as events_targets,
     aws_iam as iam,
@@ -212,12 +213,12 @@ class ChurnPredictionStack(Stack):
     # Lambda Functions
     # ------------------------------------------------------------------
     def _create_lambda_functions(self) -> dict[str, _lambda.Function]:
-        # Layer com dependências (pydantic, pyyaml, aiohttp)
+        # Layer com dependências (pydantic, pyyaml, aiohttp, numpy, pandas)
         deps_layer = _lambda.LayerVersion(self, "DepsLayer",
             layer_version_name="churn-prediction-deps",
             code=_lambda.Code.from_asset("layers/dependencies"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
-            description="pydantic, pyyaml, aiohttp para Lambda handlers",
+            description="pydantic, pyyaml, aiohttp, numpy, pandas para Lambda handlers",
         )
 
         functions: dict[str, _lambda.Function] = {}
@@ -240,20 +241,41 @@ class ChurnPredictionStack(Stack):
 
         for name in self.HANDLER_NAMES:
             cfg = handler_config[name]
-            fn = _lambda.Function(self, f"Fn-{name}",
-                function_name=f"churn-pipeline-{name}",
-                runtime=_lambda.Runtime.PYTHON_3_11,
-                handler=f"src.orchestrator.handlers.{name}_handler.handler",
-                code=_lambda.Code.from_asset("..", exclude=[
-                    "infra/*", "docs/*", "tests/*", ".git/*",
-                    ".hypothesis/*", "__pycache__/*", ".venv/*", "cdk.out/*",
-                ]),
-                timeout=Duration.seconds(cfg["timeout"]),
-                memory_size=cfg["memory"],
-                role=self.lambda_role,
-                layers=[deps_layer],
-                environment=common_env,
-            )
+
+            # SHAP usa Lambda Docker (lib SHAP é pesada demais para Layer)
+            # Imagem é buildada via CodeBuild (scripts/build-shap-image.ps1)
+            # e armazenada no ECR. CDK referencia a imagem existente.
+            if name == "shap":
+                ecr_repo = f"{self.account}.dkr.ecr.{self.region}.amazonaws.com/churn-pipeline-shap:latest"
+                fn = _lambda.DockerImageFunction(self, f"Fn-{name}",
+                    function_name=f"churn-pipeline-{name}",
+                    code=_lambda.DockerImageCode.from_ecr(
+                        repository=__import__("aws_cdk").aws_ecr.Repository.from_repository_name(
+                            self, "ShapEcrRepo", "churn-pipeline-shap"
+                        ),
+                        tag_or_digest="latest",
+                    ),
+                    timeout=Duration.seconds(cfg["timeout"]),
+                    memory_size=cfg["memory"],
+                    role=self.lambda_role,
+                    environment=common_env,
+                )
+            else:
+                fn = _lambda.Function(self, f"Fn-{name}",
+                    function_name=f"churn-pipeline-{name}",
+                    runtime=_lambda.Runtime.PYTHON_3_11,
+                    handler=f"src.orchestrator.handlers.{name}_handler.handler",
+                    code=_lambda.Code.from_asset("..", exclude=[
+                        "infra/*", "docs/*", "tests/*", ".git/*",
+                        ".hypothesis/*", "__pycache__/*", ".venv/*", "cdk.out/*",
+                    ]),
+                    timeout=Duration.seconds(cfg["timeout"]),
+                    memory_size=cfg["memory"],
+                    role=self.lambda_role,
+                    layers=[deps_layer],
+                    environment=common_env,
+                )
+
             functions[name] = fn
         return functions
 

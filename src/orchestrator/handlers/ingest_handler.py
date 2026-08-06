@@ -8,9 +8,12 @@ Requirements: 8.1, 8.3, 8.4, 17.3, 17.4
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from typing import Any
+
+import boto3
 
 from src.common.logging import get_logger, set_execution_id
 from src.extractors.ingestion import ingest_user_ids, IngestionError
@@ -48,6 +51,23 @@ def handler(event: dict, context: Any) -> dict:
     try:
         source = event.get("source", [])
         source_format = event.get("source_format")
+        trigger_key = event.get("trigger_key")
+
+        # Se veio do trigger S3, baixar o arquivo do bucket
+        if trigger_key:
+            logger.info(
+                f"Trigger S3 detectado, baixando: {trigger_key}",
+                extra={"trigger_key": trigger_key},
+            )
+            s3_client = boto3.client("s3")
+            bucket = os.environ.get("BUCKET_NAME", "sky-brazil-churn-prediction")
+            response = s3_client.get_object(Bucket=bucket, Key=trigger_key)
+            source = response["Body"].read().decode("utf-8")
+            # Detectar formato pelo nome do arquivo
+            if trigger_key.lower().endswith(".json"):
+                source_format = "json"
+            else:
+                source_format = "csv"
 
         result = ingest_user_ids(
             source=source,

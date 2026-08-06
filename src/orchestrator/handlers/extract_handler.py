@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from typing import Any
@@ -60,6 +61,17 @@ def handler(event: dict, context: Any) -> dict:
         user_ids = event.get("valid_user_ids", [])
         account_code = event.get("npaw_account_code", "sky_brazil")
         api_key = event.get("npaw_api_key", "")
+
+        # Buscar API key do Secrets Manager se não fornecida no evento
+        if not api_key:
+            logger.info("API key não fornecida no evento, buscando do Secrets Manager...")
+            secrets_client = boto3.client("secretsmanager")
+            secret_id = os.environ.get(
+                "NPAW_SECRET_ID", "churn-prediction/npaw-api-key"
+            )
+            secret_response = secrets_client.get_secret_value(SecretId=secret_id)
+            api_key = secret_response["SecretString"]
+            logger.info("API key obtida do Secrets Manager com sucesso.")
 
         # Período pode ser:
         # 1. Global: from_date/to_date no evento (aplica para todos)
@@ -139,13 +151,11 @@ def handler(event: dict, context: Any) -> dict:
             **event,
             "execution_id": execution_id,
             "extracted_data_s3_prefix": f"s3://{bucket}/{s3_prefix}",
-            "extracted_sessions": {
-                uid: sessions
-                for uid, sessions in results.items()
-                if sessions
-            },
             "users_extracted": users_extracted,
             "users_without_data": users_without_data,
+            "users_with_data": [
+                uid for uid, sessions in results.items() if sessions
+            ],
             "stage_completed": "extraction",
         }
 
