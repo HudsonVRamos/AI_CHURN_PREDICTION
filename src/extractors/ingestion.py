@@ -310,7 +310,6 @@ def ingest_user_ids(
         duplicates_removed=duplicates_removed,
         user_dates=user_dates,
     )
-    )
 
 
 def _auto_detect_and_parse(content):

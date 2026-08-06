@@ -212,6 +212,14 @@ class ChurnPredictionStack(Stack):
     # Lambda Functions
     # ------------------------------------------------------------------
     def _create_lambda_functions(self) -> dict[str, _lambda.Function]:
+        # Layer com dependências (pydantic, pyyaml, aiohttp)
+        deps_layer = _lambda.LayerVersion(self, "DepsLayer",
+            layer_version_name="churn-prediction-deps",
+            code=_lambda.Code.from_asset("layers/dependencies"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
+            description="pydantic, pyyaml, aiohttp para Lambda handlers",
+        )
+
         functions: dict[str, _lambda.Function] = {}
         common_env = {
             "BUCKET_NAME": self.bucket.bucket_name,
@@ -243,6 +251,7 @@ class ChurnPredictionStack(Stack):
                 timeout=Duration.seconds(cfg["timeout"]),
                 memory_size=cfg["memory"],
                 role=self.lambda_role,
+                layers=[deps_layer],
                 environment=common_env,
             )
             functions[name] = fn
