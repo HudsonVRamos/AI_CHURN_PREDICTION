@@ -58,27 +58,59 @@ def handler(event: dict, context: Any) -> dict:
 
     try:
         user_ids = event.get("valid_user_ids", [])
-        from_date = event.get("from_date", "last6months")
-        to_date = event.get("to_date")
         account_code = event.get("npaw_account_code", "sky_brazil")
         api_key = event.get("npaw_api_key", "")
+
+        # Período pode ser:
+        # 1. Global: from_date/to_date no evento (aplica para todos)
+        # 2. Por user: user_dates = {"user_id": {"from_date": "...", "to_date": "..."}}
+        # 3. Default: calcula automaticamente (últimos N meses a partir de hoje)
+        global_from_date = event.get("from_date")
+        global_to_date = event.get("to_date")
+        user_dates = event.get("user_dates", {})  # dict: user_id -> {from_date, to_date}
+
+        # Se nenhuma data fornecida, calcular default
+        if not global_from_date and not user_dates:
+            from datetime import datetime, timedelta, timezone
+            time_window_months = int(os.environ.get("TIME_WINDOW_MONTHS", "6"))
+            now = datetime.now(timezone.utc)
+            from_dt = now - timedelta(days=time_window_months * 30)
+            global_from_date = from_dt.strftime("%Y-%m-%d")
+            global_to_date = now.strftime("%Y-%m-%d")
 
         extractor = NPAWExtractor(
             account_code=account_code,
             api_key=api_key,
         )
 
-        # Executar extração assíncrona
+        # Executar extração assíncrona (com datas por user quando disponível)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            results = loop.run_until_complete(
-                extractor.extract_batch(
-                    user_ids=user_ids,
-                    from_date=from_date,
-                    to_date=to_date,
-                )
-            )
+            results: dict[str, list] = {}
+
+            async def _extract_all():
+                for user_id in user_ids:
+                    # Determinar datas para este user
+                    ud = user_dates.get(user_id, {})
+                    u_from = ud.get("from_date", global_from_date or "last6months")
+                    u_to = ud.get("to_date", global_to_date)
+
+                    try:
+                        sessions = await extractor.extract_user_sessions(
+                            user_id=user_id,
+                            from_date=u_from,
+                            to_date=u_to,
+                        )
+                        results[user_id] = sessions
+                    except Exception as e:
+                        logger.warning(
+                            f"Falha na extração de {user_id}: {e}",
+                            extra={"user_id": user_id, "error": str(e)},
+                        )
+                        results[user_id] = []
+
+            loop.run_until_complete(_extract_all())
         finally:
             loop.close()
 

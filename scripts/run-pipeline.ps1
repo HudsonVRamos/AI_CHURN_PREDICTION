@@ -15,14 +15,28 @@
 # ║  EDITE AQUI                                                  ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-# Período de extração (formato: YYYY-MM-DD)
-$FROM_DATE = "2024-01-01"
-$TO_DATE   = "2024-12-31"
-
 # Modo: "predict" (inferência) ou "train" (treinamento)
 $MODE = "predict"
 
+# Período GLOBAL (aplica para users que não têm data individual)
+# Deixe vazio ("") para usar default automático (últimos 6 meses)
+$FROM_DATE = "2024-01-01"
+$TO_DATE   = "2024-12-31"
+
+# User IDs com datas INDIVIDUAIS (opcional)
+# Formato: @{ "user_id" = @{ from_date = "YYYY-MM-DD"; to_date = "YYYY-MM-DD" } }
+# Churned users: use a data de cancelamento como to_date
+# Active users: use a data de hoje como to_date (ou deixe sem data individual)
+$USER_DATES = @{
+    # Exemplo churned (cancelou em 2024-06-15, extrair 6 meses antes):
+    # "abc123-churned-user-uuid" = @{ from_date = "2023-12-15"; to_date = "2024-06-15" }
+
+    # Exemplo active (sem data de cancelamento, usa período global):
+    # "def456-active-user-uuid" = @{}
+}
+
 # User IDs para analisar (um por linha)
+# Users que NÃO estão em $USER_DATES usam $FROM_DATE/$TO_DATE global
 $USER_IDS = @(
     "9e527027-b330-5d8f-aaa2-bf6653bd6eec"
 )
@@ -40,18 +54,28 @@ Write-Host "║  AI CHURN PREDICTION - Sky Brazil                ║" -Foregroun
 Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Modo:       $MODE"
-Write-Host "  Período:    $FROM_DATE → $TO_DATE"
-Write-Host "  Usuários:   $($USER_IDS.Count)"
+Write-Host "  Período:    $FROM_DATE → $TO_DATE (global)"
+Write-Host "  Usuários:   $($USER_IDS.Count) ($($USER_DATES.Count) com data individual)"
 Write-Host ""
+
+# Montar user_dates para o JSON (converter hashtable para formato compatível)
+$userDatesJson = @{}
+foreach ($uid in $USER_DATES.Keys) {
+    $dates = $USER_DATES[$uid]
+    if ($dates -and $dates.Count -gt 0) {
+        $userDatesJson[$uid] = $dates
+    }
+}
 
 # Montar input JSON
 $inputObj = @{
-    mode      = $MODE
-    source    = $USER_IDS
-    from_date = $FROM_DATE
-    to_date   = $TO_DATE
+    mode       = $MODE
+    source     = $USER_IDS
+    from_date  = $FROM_DATE
+    to_date    = $TO_DATE
+    user_dates = $userDatesJson
 }
-$inputJson = $inputObj | ConvertTo-Json -Compress
+$inputJson = $inputObj | ConvertTo-Json -Compress -Depth 4
 
 Write-Host "[1/3] Iniciando pipeline..." -ForegroundColor Yellow
 $executionResult = aws stepfunctions start-execution `
